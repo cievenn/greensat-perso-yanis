@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="fr" class="antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GreenSat One | Environmental Bio-Monitor</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+    <script type="importmap">
+      { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <style>
+        /* Styles spécifiques pour la navigation du graphique */
+        #chart-nav-controls {
+            display: none; /* Caché par défaut (mode 24h) */
+            align-items: center;
+            gap: 1rem;
+            margin-top: 1rem;
+            width: 100%;
+            justify-content: center;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .nav-btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: white;
+            border-radius: 50%;
+            width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: rgba(255,255,255,0.2); transform: scale(1.1); }
+        .nav-btn.disabled { opacity: 0; pointer-events: none; } /* On cache la flèche droite si pas besoin */
+        
+        #nav-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--c-accent-secondary);
+            font-weight: 700;
+            min-width: 150px; text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="loading-overlay" id="preloader">
+        <div class="font-mono text-sm tracking-widest mb-4">INITIALIZING SYSTEM</div>
+        <div class="loader-line"></div>
+    </div>
+
+    <canvas id="scene-3d" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; opacity: 0.8;"></canvas>
+    <div class="scanlines"></div>
+    <div id="cursor-outer"></div>
+    <div id="cursor-inner"></div>
+    <div id="noise-canvas" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/200%22%3E%3Cfilter id=%22noise%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noise)%22 opacity=%220.5%22/%3E%3C/svg%3E');"></div>
+
+    <main class="relative z-10 min-h-screen flex flex-col pt-6 md:pt-10 pb-20">
+
+        <header class="px-6 md:px-12 mb-8 flex flex-col md:flex-row justify-between md:items-end gap-4">
+            <div>
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="status-indicator" id="global-status-dot"></div>
+                    <span class="txt-label text-accent-primary">SYS.ONLINE</span>
+                </div>
+                <h1 class="text-4xl md:text-6xl lg:text-7xl font-black tracking-tighter text-gradient leading-none txt-kinetic">
+                    GREENSAT<br><span style="color: var(--c-accent-primary);">ONE_</span>
+                </h1>
+            </div>
+            <div class="flex justify-between md:block md:text-right border-t md:border-t-0 border-white/10 pt-4 md:pt-0 w-full md:w-auto">
+                <div>
+                    <div class="txt-label mb-1">LOCAL TIME</div>
+                    <div class="font-mono text-xl md:text-2xl" id="clock-display">00:00:00</div>
+                </div>
+                <div class="hidden md:block txt-label mt-2 text-gray-500" id="date-display">YYYY-MM-DD</div>
+            </div>
+        </header>
+
+        <div class="bento-grid">
+            <div class="glass tilt-card glow-active col-span-12 lg:col-span-4 lg:row-span-2 rounded-3xl p-0 flex flex-col relative group h-[350px] lg:h-auto" id="card-orb">
+                <div class="glass-header">
+                    <span class="txt-label">CORE MONITOR</span>
+                    <i class="ph ph-aperture text-xl"></i>
+                </div>
+                <div class="flex-1 flex items-center justify-center relative overflow-hidden">
+                    <canvas id="orb-canvas" class="absolute inset-0 w-full h-full"></canvas>
+                    <div class="relative z-10 text-center mix-blend-overlay">
+                        <div class="txt-value-lg" id="aqi-score">SYNC</div>
+                        <div class="txt-label mt-2">AIR QUALITY INDEX</div>
+                    </div>
+                </div>
+                <div class="p-6 border-t border-[rgba(255,255,255,0.1)] bg-black/20">
+                    <div class="flex justify-between items-center">
+                        <span class="txt-mono text-sm">STATUS</span>
+                        <span class="px-2 py-1 rounded bg-white/10 txt-mono text-xs text-white" id="main-status-text">WAITING SAT LINK</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-4 rounded-3xl p-6 flex flex-col justify-between h-[200px] lg:h-auto hover-sfx">
+                <div class="flex justify-between items-start mb-4">
+                    <div><div class="txt-label text-red-400">THERMAL</div><div class="txt-value-lg mt-2" id="val-temp">00</div></div>
+                    <div class="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500"><i class="ph ph-thermometer-simple text-xl"></i></div>
+                </div>
+                <div class="bar-container"><div class="bar-fill bg-red-500" id="bar-temp" style="width: 0%"></div></div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-4 rounded-3xl p-6 flex flex-col justify-between h-[200px] lg:h-auto hover-sfx">
+                <div class="flex justify-between items-start mb-4">
+                    <div><div class="txt-label text-blue-400">HYGRO</div><div class="txt-value-lg mt-2" id="val-hum">00</div></div>
+                    <div class="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500"><i class="ph ph-drop text-xl"></i></div>
+                </div>
+                <div class="bar-container"><div class="bar-fill bg-blue-500" id="bar-hum" style="width: 0%"></div></div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-4 rounded-3xl p-6 flex flex-col justify-between h-[200px] lg:h-auto hover-sfx" id="card-gas">
+                <div class="flex justify-between items-start mb-4">
+                    <div><div class="txt-label text-green-400">GAS PPM</div><div class="txt-value-lg mt-2" id="val-gas">00</div></div>
+                    <div class="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center text-green-500"><i class="ph ph-wind text-xl"></i></div>
+                </div>
+                <div class="bar-container"><div class="bar-fill bg-green-500" id="bar-gas" style="width: 0%"></div></div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-4 rounded-3xl p-6 flex flex-col justify-between h-[200px] lg:h-auto hover-sfx">
+                <div class="flex justify-between items-start mb-4">
+                    <div><div class="txt-label text-yellow-400">LUMINOSITY</div><div class="txt-value-lg mt-2" id="val-lux">00</div></div>
+                    <div class="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center text-yellow-500"><i class="ph ph-sun text-xl"></i></div>
+                </div>
+                <div class="bar-container"><div class="bar-fill bg-yellow-500" id="bar-lux" style="width: 0%"></div></div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-8 rounded-3xl p-0 flex flex-col h-[400px] lg:h-auto">
+                <div class="glass-header flex-col lg:flex-row items-start lg:items-center gap-4">
+                    <div class="flex items-center gap-4">
+                        <span class="txt-label">METRICS</span>
+                        <div class="chart-tabs">
+                            <button class="chart-tab active" onclick="switchChart('thermal')">THERMAL</button>
+                            <button class="chart-tab" onclick="switchChart('air')">AIR</button>
+                            <button class="chart-tab" onclick="switchChart('light')">LIGHT</button>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4 lg:ml-auto border-t lg:border-t-0 lg:border-l border-white/10 pt-2 lg:pt-0 lg:pl-4">
+                        <span class="txt-label">RANGE</span>
+                        <div class="chart-tabs">
+                            <button class="chart-tab time-tab active" onclick="switchTimeRange('day')">24H</button>
+                            <button class="chart-tab time-tab" onclick="switchTimeRange('week')">7D</button>
+                            <button class="chart-tab time-tab" onclick="switchTimeRange('month')">30D</button>
+                            <button class="chart-tab time-tab" onclick="switchTimeRange('year')">1Y</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="chart-nav-controls">
+                    <button class="nav-btn" onclick="changeDate(-1)"><i class="ph ph-caret-left"></i></button>
+                    <span id="nav-label">Current View</span>
+                    <button class="nav-btn" id="nav-next" onclick="changeDate(1)"><i class="ph ph-caret-right"></i></button>
+                </div>
+
+                <div class="flex-1 p-4 relative">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass tilt-card col-span-12 lg:col-span-4 rounded-3xl p-0 flex flex-col h-[350px] lg:h-auto">
+                 <div class="glass-header">
+                    <span class="txt-label">ATMOSPHERIC PRESSURE</span>
+                    <i class="ph ph-gauge text-xl"></i>
+                </div>
+                <div class="p-6 flex-1 flex flex-col justify-center items-center border-b border-[rgba(255,255,255,0.05)] hover-sfx">
+                    <div class="txt-value-lg" id="val-pres">0000</div>
+                    <span class="txt-mono text-sm opacity-50">hPa</span>
+                </div>
+                <div class="p-4 bg-black/30 flex-1 overflow-hidden flex flex-col">
+                    <div class="txt-label mb-2">SYSTEM LOG</div>
+                    <div id="console-output" class="overflow-y-auto h-full text-xs font-mono scrollbar-hide"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="flex flex-col items-center justify-center mt-12 opacity-30 txt-mono text-xs px-4 gap-4">
+            <div>GREENSAT ONE PROJECT // ID: #GS1-2024-X // <span id="connection-status">SEARCHING SIGNAL...</span></div>
+            <button id="audio-toggle" class="border border-white/20 px-3 py-1 rounded hover:bg-white/10 transition-colors uppercase">
+                [ AUDIO: OFF ]
+            </button>
+        </footer>
+
+    </main>
+
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        setInterval(() => {
+            const d = new Date();
+            const el = document.getElementById('date-display-mob');
+            if(el) el.innerText = d.toLocaleDateString();
+        }, 1000);
+    </script>
+</body>
+</html>
