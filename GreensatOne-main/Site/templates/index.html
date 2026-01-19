@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="fr" class="antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GreenSat One | Environmental Bio-Monitor</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.3/howler.min.js"></script>
+
+    <style>
+        /* --- CORE IDENTITY VARIABLES --- */
+        :root {
+            --c-bg: #030508;
+            --c-surface: rgba(255, 255, 255, 0.02);
+            --c-surface-hover: rgba(255, 255, 255, 0.05);
+            --c-border: rgba(255, 255, 255, 0.08);
+            --c-border-highlight: rgba(255, 255, 255, 0.2);
+            
+            --c-accent-primary: #2e5cff;
+            --c-accent-secondary: #00f2ff;
+            --c-accent-success: #00ffa3;
+            --c-accent-warning: #ffb800;
+            --c-accent-danger: #ff2e5c;
+
+            --font-ui: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+
+            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* --- RESET & BASE --- */
+        body {
+            background-color: var(--c-bg);
+            color: #fff;
+            font-family: var(--font-ui);
+            overflow-x: hidden;
+            cursor: none; /* Custom cursor required */
+        }
+        
+        ::selection { background: var(--c-accent-primary); color: #fff; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--c-bg); }
+        ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--c-accent-primary); }
+
+        /* --- ANIMATED BACKGROUND CANVAS --- */
+        #noise-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: -2;
+            opacity: 0.4;
+            pointer-events: none;
+        }
+        #fluid-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: -1;
+            /* filter: blur(60px); Performance cost warning: blur on large canvas can be heavy. 
+               Alternative: Blur via context in JS or simple opacity blend. 
+               We'll keep CSS blur but optimized in JS drawing. */
+        }
+
+        /* --- UI COMPONENTS: GLASS PANELS --- */
+        .glass {
+            background: var(--c-surface);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--c-border);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.3s ease, transform 0.3s var(--ease-out-expo), box-shadow 0.3s ease;
+        }
+
+        .glass::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: radial-gradient(circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255,255,255,0.07), transparent 40%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .glass:hover {
+            border-color: var(--c-border-highlight);
+            transform: translateY(-2px);
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5);
+        }
+        .glass:hover::after { opacity: 1; }
+
+        .glass-header {
+            border-bottom: 1px solid var(--c-border);
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0,0,0,0.2);
+        }
+
+        /* --- TYPOGRAPHY UTILS --- */
+        .txt-mono { font-family: var(--font-mono); letter-spacing: -0.05em; }
+        .txt-label { 
+            font-family: var(--font-mono); 
+            font-size: 0.7rem; 
+            text-transform: uppercase; 
+            letter-spacing: 0.15em; 
+            color: rgba(255,255,255,0.4);
+        }
+        .txt-value-lg { font-size: 3.5rem; font-weight: 800; line-height: 1; letter-spacing: -0.04em; }
+        .txt-value-md { font-size: 2rem; font-weight: 700; line-height: 1; letter-spacing: -0.03em; }
+
+        /* --- CUSTOM CURSOR --- */
+        #cursor-outer {
+            position: fixed; top: 0; left: 0;
+            width: 40px; height: 40px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            transition: transform 0.15s ease-out, border-color 0.2s;
+            mix-blend-mode: difference;
+        }
+        #cursor-inner {
+            position: fixed; top: 0; left: 0;
+            width: 6px; height: 6px;
+            background: white;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* --- LAYOUT GRID (BENTO BOX) --- */
+        .bento-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-auto-rows: minmax(140px, auto);
+            gap: 1.5rem;
+            padding: 1.5rem;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        /* --- SPECIFIC MODULE STYLES --- */
+        .status-indicator {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--c-accent-success);
+            box-shadow: 0 0 10px var(--c-accent-success);
+            animation: pulse-dot 2s infinite;
+        }
+
+        .bar-container {
+            width: 100%; height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 1rem;
+        }
+        .bar-fill {
+            height: 100%;
+            background: currentColor;
+            width: 0%;
+            transition: width 1s var(--ease-out-expo);
+        }
+
+        /* --- ANIMATIONS --- */
+        @keyframes pulse-dot {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        .loading-overlay {
+            position: fixed; inset: 0; background: #000; z-index: 10000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .loader-line {
+            width: 200px; height: 2px; background: #333; margin-top: 20px; position: relative; overflow: hidden;
+        }
+        .loader-line::after {
+            content: ''; position: absolute; inset: 0; background: #fff;
+            transform: translateX(-100%); animation: load-anim 1.5s infinite;
+        }
+        @keyframes load-anim {
+            0% { transform: translateX(-100%); }
+            50% { transform: translateX(0%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* --- UTILS --- */
+        .text-gradient {
+            background: linear-gradient(to right, #fff, rgba(255,255,255,0.5));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .col-span-12 { grid-column: span 12; }
+        .col-span-8 { grid-column: span 12; } /* Mobile first default */
+        .col-span-4 { grid-column: span 12; }
+        .col-span-3 { grid-column: span 6; }
+        
+        @media (min-width: 1024px) {
+            .col-span-8 { grid-column: span 8; }
+            .col-span-4 { grid-column: span 4; }
+            .col-span-3 { grid-column: span 3; }
+            .row-span-2 { grid-row: span 2; }
+        }
+
+        /* Console log style */
+        .log-entry {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            border-left: 2px solid transparent;
+            padding-left: 8px;
+            margin-bottom: 4px;
+            opacity: 0.7;
+        }
+        .log-info { border-color: var(--c-accent-primary); color: #a0c4ff; }
+        .log-warn { border-color: var(--c-accent-warning); color: #ffe082; }
+        .log-err { border-color: var(--c-accent-danger); color: #ff8a80; }
+
+    </style>
+</head>
+<body>
+
+
+
+    <div id="cursor-outer"></div>
+    <div id="cursor-inner"></div>
+
+    <canvas id="fluid-canvas"></canvas>
+    <div id="noise-canvas" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/200%22%3E%3Cfilter id=%22noise%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noise)%22 opacity=%220.5%22/%3E%3C/svg%3E');"></div>
+
+    <main class="relative z-10 min-h-screen flex flex-col pt-10 pb-20">
+
+        <header class="px-6 md:px-12 mb-8 flex justify-between items-end">
+            <div>
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="status-indicator" id="global-status-dot"></div>
+                    <span class="txt-label text-accent-primary">SYS.ONLINE</span>
+                </div>
+                <h1 class="text-5xl md:text-7xl font-black tracking-tighter text-gradient leading-none">
+                    GREENSAT<br><span style="color: var(--c-accent-primary);">ONE_</span>
+                </h1>
+            </div>
+            <div class="hidden md:block text-right">
+                <div class="txt-label mb-1">LOCAL TIME</div>
+                <div class="font-mono text-2xl" id="clock-display">00:00:00</div>
+                <div class="txt-label mt-2 text-gray-500" id="date-display">YYYY-MM-DD</div>
+            </div>
+        </header>
+
+        <div class="bento-grid">
+
+            <div class="glass col-span-12 md:col-span-4 row-span-2 rounded-3xl p-0 flex flex-col relative group">
+                <div class="glass-header">
+                    <span class="txt-label">CORE MONITOR</span>
+                    <i class="ph ph-aperture text-xl"></i>
+                </div>
+                <div class="flex-1 flex items-center justify-center relative overflow-hidden">
+                    <canvas id="orb-canvas" class="absolute inset-0 w-full h-full"></canvas>
+                    <div class="relative z-10 text-center mix-blend-overlay">
+                        <div class="txt-value-lg" id="aqi-score">--</div>
+                        <div class="txt-label mt-2">AIR QUALITY INDEX</div>
+                    </div>
+                </div>
+                <div class="p-6 border-t border-[rgba(255,255,255,0.1)] bg-black/20">
+                    <div class="flex justify-between items-center">
+                        <span class="txt-mono text-sm">STATUS</span>
+                        <span class="px-2 py-1 rounded bg-white/10 txt-mono text-xs text-white" id="main-status-text">ANALYZING</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-4 rounded-3xl p-6 flex flex-col justify-between group hover:border-red-500/30 transition-colors">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <div class="txt-label text-red-400">THERMAL</div>
+                        <div class="txt-value-lg mt-2 group-hover:translate-x-2 transition-transform duration-300" id="val-temp">--</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500">
+                        <i class="ph ph-thermometer-simple text-xl"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs txt-mono opacity-50 mb-1">
+                        <span>MIN: 18°C</span>
+                        <span>MAX: 40°C</span>
+                    </div>
+                    <div class="bar-container">
+                        <div class="bar-fill bg-red-500" id="bar-temp" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-4 rounded-3xl p-6 flex flex-col justify-between group hover:border-blue-500/30 transition-colors">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <div class="txt-label text-blue-400">HYGRO</div>
+                        <div class="txt-value-lg mt-2 group-hover:translate-x-2 transition-transform duration-300" id="val-hum">--</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500">
+                        <i class="ph ph-drop text-xl"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs txt-mono opacity-50 mb-1">
+                        <span>DRY</span>
+                        <span>WET</span>
+                    </div>
+                    <div class="bar-container">
+                        <div class="bar-fill bg-blue-500" id="bar-hum" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-4 rounded-3xl p-6 flex flex-col justify-between group hover:border-green-500/30 transition-colors">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <div class="txt-label text-green-400">GAS PPM</div>
+                        <div class="txt-value-lg mt-2 group-hover:translate-x-2 transition-transform duration-300" id="val-gas">--</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center text-green-500">
+                        <i class="ph ph-wind text-xl"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs txt-mono opacity-50 mb-1">
+                        <span>CLEAN</span>
+                        <span>TOXIC</span>
+                    </div>
+                    <div class="bar-container">
+                        <div class="bar-fill bg-green-500" id="bar-gas" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-4 rounded-3xl p-6 flex flex-col justify-between group hover:border-yellow-500/30 transition-colors">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <div class="txt-label text-yellow-400">LUMINOSITY</div>
+                        <div class="txt-value-lg mt-2 group-hover:translate-x-2 transition-transform duration-300" id="val-lux">--</div>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+                        <i class="ph ph-sun text-xl"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs txt-mono opacity-50 mb-1">
+                        <span>DARK</span>
+                        <span>BRIGHT</span>
+                    </div>
+                    <div class="bar-container">
+                        <div class="bar-fill bg-yellow-500" id="bar-lux" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-8 rounded-3xl p-0 flex flex-col h-[300px] md:h-auto">
+                <div class="glass-header">
+                    <span class="txt-label">HISTORICAL DATA</span>
+                    <div class="flex gap-2">
+                        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                    </div>
+                </div>
+                <div class="flex-1 p-4 relative">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+            <div class="glass col-span-12 md:col-span-4 rounded-3xl p-0 flex flex-col h-[300px] md:h-auto">
+                 <div class="glass-header">
+                    <span class="txt-label">ATMOSPHERIC PRESSURE</span>
+                    <i class="ph ph-gauge text-xl"></i>
+                </div>
+                <div class="p-6 flex-1 flex flex-col justify-center items-center border-b border-[rgba(255,255,255,0.05)]">
+                    <div class="txt-value-lg" id="val-pres">--</div>
+                    <span class="txt-mono text-sm opacity-50">hPa</span>
+                </div>
+                <div class="p-4 bg-black/30 flex-1 overflow-hidden flex flex-col">
+                    <div class="txt-label mb-2">SYSTEM LOG</div>
+                    <div id="console-output" class="overflow-y-auto h-full text-xs font-mono scrollbar-hide">
+                        </div>
+                </div>
+            </div>
+
+        </div>
+
+        <footer class="text-center mt-12 opacity-30 txt-mono text-xs">
+            GREENSAT ONE PROJECT // ID: #GS1-2024-X // <span id="connection-status">CONNECTED</span>
+        </footer>
+
+    </main>
+
+    <script>
+        /* =========================================
+           1. CORE SYSTEM & CURSOR
+           ========================================= */
+        const cursorOuter = document.getElementById("cursor-outer");
+        const cursorInner = document.getElementById("cursor-inner");
+        let mouseX = 0, mouseY = 0;
+        let cursorX = 0, cursorY = 0;
+
+        document.addEventListener("mousemove", (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            
+            // Move inner immediately
+            cursorInner.style.transform = `translate(${mouseX}px, ${mouseY}px)`;
+            
+            // Pass mouse var to CSS for glass effect
+            document.querySelectorAll('.glass').forEach(el => {
+                const rect = el.getBoundingClientRect();
+                const x = mouseX - rect.left;
+                const y = mouseY - rect.top;
+                el.style.setProperty('--mouse-x', `${x}px`);
+                el.style.setProperty('--mouse-y', `${y}px`);
+            });
+        });
+
+        // Smooth outer cursor loop
+        function animateCursor() {
+            const dt = 0.15;
+            cursorX += (mouseX - cursorX) * dt;
+            cursorY += (mouseY - cursorY) * dt;
+            cursorOuter.style.transform = `translate(${cursorX - 20}px, ${cursorY - 20}px)`;
+            requestAnimationFrame(animateCursor);
+        }
+        animateCursor();
+
+        // Hover Effects
+        document.querySelectorAll('a, button, .glass').forEach(el => {
+            el.addEventListener('mouseenter', () => {
+                cursorOuter.style.borderColor = 'var(--c-accent-secondary)';
+                cursorOuter.style.transform += ' scale(1.5)';
+            });
+            el.addEventListener('mouseleave', () => {
+                cursorOuter.style.borderColor = 'rgba(255,255,255,0.3)';
+                cursorOuter.style.transform = cursorOuter.style.transform.replace(' scale(1.5)', '');
+            });
+        });
+
+        /* =========================================
+           2. BACKGROUND FLUID CANVAS
+           ========================================= */
+        const canvas = document.getElementById('fluid-canvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+        
+        let particles = [];
+        const particleCount = 40; // Low count for performance, big radius
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.vx = (Math.random() - 0.5) * 1; // Slow movement
+                this.vy = (Math.random() - 0.5) * 1;
+                this.radius = Math.random() * 200 + 100;
+                this.color = Math.random() > 0.5 ? '#2e5cff' : '#001133'; // Deep blue
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                if (this.x < -this.radius) this.x = width + this.radius;
+                if (this.x > width + this.radius) this.x = -this.radius;
+                if (this.y < -this.radius) this.y = height + this.radius;
+                if (this.y > height + this.radius) this.y = -this.radius;
+            }
+            draw() {
+                ctx.beginPath();
+                // Gradient for "soft" feel
+                const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+                g.addColorStop(0, this.color);
+                g.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = g;
+                ctx.globalAlpha = 0.15; // Very transparent
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        for (let i = 0; i < particleCount; i++) particles.push(new Particle());
+
+        function animateBg() {
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = '#030508'; // Base bg
+            ctx.fillRect(0,0,width,height);
+            
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            requestAnimationFrame(animateBg);
+        }
+        animateBg();
+
+        /* =========================================
+           3. ORB VISUALIZER CANVAS (Centerpiece)
+           ========================================= */
+        const orbCanvas = document.getElementById('orb-canvas');
+        const oCtx = orbCanvas.getContext('2d');
+        let orbW, orbH;
+        let time = 0;
+        let orbState = 'normal'; // normal, warning, danger
+
+        function resizeOrb() {
+            const rect = orbCanvas.parentElement.getBoundingClientRect();
+            orbW = orbCanvas.width = rect.width;
+            orbH = orbCanvas.height = rect.height;
+        }
+        window.addEventListener('resize', resizeOrb);
+        // Defer initial resize to ensure DOM layout
+        setTimeout(resizeOrb, 100);
+
+        function drawOrb() {
+            oCtx.clearRect(0, 0, orbW, orbH);
+            const cx = orbW / 2;
+            const cy = orbH / 2;
+            
+            time += 0.01;
+            
+            // Base radius pulses
+            let baseR = 60 + Math.sin(time * 2) * 5;
+            
+            // Color based on state
+            let colorStops = ['#2e5cff', '#00f2ff']; // Blue/Cyan
+            if (orbState === 'warning') colorStops = ['#ffb800', '#ffeb3b'];
+            if (orbState === 'danger') {
+                colorStops = ['#ff2e5c', '#ff1744'];
+                baseR = 60 + Math.sin(time * 15) * 10; // Fast shake
+            }
+
+            // Draw multiple rings
+            for (let i = 0; i < 3; i++) {
+                oCtx.beginPath();
+                oCtx.lineWidth = 2;
+                oCtx.strokeStyle = colorStops[0];
+                oCtx.globalAlpha = 1 - (i * 0.3);
+                
+                // Distorted circle
+                for (let a = 0; a < Math.PI * 2; a += 0.1) {
+                    let r = baseR + (i * 15);
+                    // Add noise
+                    r += Math.sin(a * 5 + time * (i+1)) * 5;
+                    const x = cx + Math.cos(a) * r;
+                    const y = cy + Math.sin(a) * r;
+                    if (a === 0) oCtx.moveTo(x, y);
+                    else oCtx.lineTo(x, y);
+                }
+                oCtx.closePath();
+                oCtx.stroke();
+            }
+            
+            // Inner core
+            const g = oCtx.createRadialGradient(cx, cy, 0, cx, cy, baseR);
+            g.addColorStop(0, colorStops[1]);
+            g.addColorStop(0.7, colorStops[0]);
+            g.addColorStop(1, 'transparent');
+            oCtx.fillStyle = g;
+            oCtx.globalAlpha = 0.5;
+            oCtx.beginPath();
+            oCtx.arc(cx, cy, baseR, 0, Math.PI * 2);
+            oCtx.fill();
+
+            requestAnimationFrame(drawOrb);
+        }
+        drawOrb();
+
+
+        /* =========================================
+           4. DATA HANDLING & CHART
+           ========================================= */
+        
+        // Chart Config
+        Chart.defaults.font.family = "'JetBrains Mono', monospace";
+        Chart.defaults.color = "rgba(255,255,255,0.5)";
+        
+        const chartCtx = document.getElementById('mainChart').getContext('2d');
+        const gradientT = chartCtx.createLinearGradient(0, 0, 0, 300);
+        gradientT.addColorStop(0, 'rgba(255, 46, 92, 0.4)'); // Red
+        gradientT.addColorStop(1, 'rgba(255, 46, 92, 0)');
+
+        const gradientH = chartCtx.createLinearGradient(0, 0, 0, 300);
+        gradientH.addColorStop(0, 'rgba(46, 92, 255, 0.4)'); // Blue
+        gradientH.addColorStop(1, 'rgba(46, 92, 255, 0)');
+
+        const mainChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'TEMP',
+                        data: [],
+                        borderColor: '#ff2e5c',
+                        backgroundColor: gradientT,
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'HUMIDITY',
+                        data: [],
+                        borderColor: '#2e5cff',
+                        backgroundColor: gradientH,
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        titleFont: { family: 'JetBrains Mono' },
+                        bodyFont: { family: 'JetBrains Mono' },
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+
+        // Logger Utility
+        const logBox = document.getElementById('console-output');
+        function log(msg, type='info') {
+            const el = document.createElement('div');
+            el.className = `log-entry log-${type}`;
+            const time = new Date().toLocaleTimeString('fr-FR');
+            el.innerText = `[${time}] > ${msg}`;
+            logBox.prepend(el);
+            if(logBox.children.length > 20) logBox.lastChild.remove();
+        }
+
+        // Data Update Logic
+        let previousData = {};
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/data.json');
+                if(!response.ok) throw new Error("data.json not found");
+                const data = await response.json();
+
+                // Update Values with GSAP counter effect
+                updateValue('val-temp', data.temp, '°C');
+                updateValue('val-hum', data.hum, '%');
+                updateValue('val-gas', data.gaz_pct, '%');
+                updateValue('val-lux', data.lux, 'Lx');
+                updateValue('val-pres', data.press, '');
+
+                // Update Bars
+                updateBar('bar-temp', data.temp, 50); // Assumed max 50
+                updateBar('bar-hum', data.hum, 100);
+                updateBar('bar-gas', data.gaz_pct, 100);
+                updateBar('bar-lux', data.lux, 1000); // Assumed max 1000
+
+                // State Logic (Orb Color)
+                const statusText = document.getElementById('main-status-text');
+                const globalDot = document.getElementById('global-status-dot');
+                
+                if (data.gaz_pct > 20) {
+                    orbState = 'danger';
+                    statusText.innerText = "CRITICAL: GAS DETECTED";
+                    statusText.style.background = "var(--c-accent-danger)";
+                    globalDot.style.background = "var(--c-accent-danger)";
+                    log(`GAS ALERT: ${data.gaz_pct}%`, 'err');
+                } else if (data.temp > 35) {
+                    orbState = 'warning';
+                    statusText.innerText = "WARNING: HIGH TEMP";
+                    statusText.style.background = "var(--c-accent-warning)";
+                    globalDot.style.background = "var(--c-accent-warning)";
+                    if(previousData.temp <= 35) log(`Temp Warning: ${data.temp}°C`, 'warn');
+                } else {
+                    orbState = 'normal';
+                    statusText.innerText = "NOMINAL";
+                    statusText.style.background = "rgba(255,255,255,0.1)";
+                    globalDot.style.background = "var(--c-accent-success)";
+                }
+
+                // Chart Push
+                const label = data.date_time;
+                if (mainChart.data.labels[mainChart.data.labels.length - 1] !== label) {
+                    mainChart.data.labels.push(label);
+                    mainChart.data.datasets[0].data.push(data.temp);
+                    mainChart.data.datasets[1].data.push(data.hum);
+                    
+                    if (mainChart.data.labels.length > 15) {
+                        mainChart.data.labels.shift();
+                        mainChart.data.datasets[0].data.shift();
+                        mainChart.data.datasets[1].data.shift();
+                    }
+                    mainChart.update('none'); // Silent update
+                }
+
+                previousData = data;
+                document.getElementById('connection-status').innerText = "CONNECTED";
+                document.getElementById('connection-status').style.color = "var(--c-accent-success)";
+
+            } catch (e) {
+                console.error(e);
+                log("Connection lost...", 'err');
+                document.getElementById('connection-status').innerText = "OFFLINE";
+                document.getElementById('connection-status').style.color = "var(--c-accent-danger)";
+            }
+        }
+
+        function updateValue(id, val, unit) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            // Simple check to avoid animating if value is same
+            if (el.dataset.prev == val) return;
+            
+            gsap.to(el, {
+                innerHTML: val,
+                duration: 1,
+                snap: { innerHTML: 0.1 },
+                onUpdate: function() {
+                    this.targets()[0].innerHTML = Math.round(this.targets()[0].innerHTML * 10) / 10 + `<span class="text-sm opacity-50 ml-1 font-normal">${unit}</span>`;
+                }
+            });
+            el.dataset.prev = val;
+        }
+
+        function updateBar(id, val, max) {
+            const pct = Math.min((val / max) * 100, 100);
+            gsap.to(`#${id}`, { width: `${pct}%`, duration: 1, ease: "power2.out" });
+        }
+
+        // Clock
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock-display').innerText = now.toLocaleTimeString('fr-FR');
+            document.getElementById('date-display').innerText = now.toISOString().split('T')[0];
+        }, 1000);
+
+        // Init
+        window.addEventListener('load', () => {
+            const tl = gsap.timeline();
+            tl.to("#preloader", { opacity: 0, duration: 0.8, delay: 1, onComplete: () => document.getElementById('preloader').remove() })
+              .from("header", { y: -50, opacity: 0, duration: 1, ease: "power3.out" }, "-=0.4")
+              .from(".glass", { 
+                  y: 50, 
+                  opacity: 0, 
+                  duration: 0.8, 
+                  stagger: 0.1, 
+                  ease: "back.out(1.2)" 
+              }, "-=0.6");
+            
+            // Start Polling
+            fetchData();
+            setInterval(fetchData, 2000);
+            log("System Boot Sequence Complete.");
+            log("Sensors initialized.");
+        });
+
+    </script>
+</body>
+</html>
