@@ -1,0 +1,42 @@
+composants qui arrive et comment les branchés: 
+
+
+
+
+1️⃣ Architecture retenue (simple & robuste)
+
+Fonction	Composant
+Température / Humidité	DHT22
+Pression atmosphérique	BMP280 (I2C)
+Luminosité	LDR (ADC)
+Horodatage	Temps interne (RTC optionnel)
+Stockage	Module carte SD (SPI)
+MCU	Raspberry Pi Pico
+Langage	MicroPython
+
+
+
+2️⃣ Branchement conseillé (Pico)
+🔹 DHT22
+DHT22	Pico
+DATA	GP15
+VCC	3.3V
+GND	GND
+
+🔹 BMP280 (I2C)
+BMP280	Pico
+SDA	GP0
+SCL	GP1
+VCC	3.3V
+GND	GND
+
+🔹 LDR (pont diviseur)
+Élément	Pico
+Signal	GP26 (ADC0)
+
+🔹 Module SD (SPI)
+SD	Pico
+CS	GP5
+MOSI	GP3
+MISO	GP4
+SCK	GP2
